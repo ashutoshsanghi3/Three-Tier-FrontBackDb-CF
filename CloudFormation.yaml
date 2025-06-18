@@ -11,18 +11,18 @@ Parameters:
   PublicSubnet2CIDR:
     Type: String
     Default: 10.0.2.0/24
-  PrivateSubnet1CIDR:
+  PublicSubnet3CIDR:
     Type: String
     Default: 10.0.3.0/24
-  PrivateSubnet2CIDR:
+  PrivateSubnet1CIDR:
     Type: String
     Default: 10.0.4.0/24
-  ClusterName:
+  PrivateSubnet2CIDR:
     Type: String
-    Default: ThreeTierEKSCluster
-  NodeInstanceType:
+    Default: 10.0.5.0/24
+  PrivateSubnet3CIDR:
     Type: String
-    Default: t3.medium
+    Default: 10.0.6.0/24
 
 Resources:
   VPC:
@@ -66,6 +66,17 @@ Resources:
         - Key: Name
           Value: PublicSubnet2
 
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet3CIDR
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet3
+
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -85,6 +96,16 @@ Resources:
       Tags:
         - Key: Name
           Value: PrivateSubnet2
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet3CIDR
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet3
 
   NatEIP:
     Type: AWS::EC2::EIP
@@ -125,6 +146,12 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
+  PublicSubnet3RouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -149,6 +176,12 @@ Resources:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
+  PrivateSubnet3RouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable
+
   EKSClusterRole:
     Type: AWS::IAM::Role
     Properties:
@@ -166,45 +199,79 @@ Resources:
   EKSCluster:
     Type: AWS::EKS::Cluster
     Properties:
-      Name: !Ref ClusterName
+      Name: ThreeTierEKSCluster
       RoleArn: !GetAtt EKSClusterRole.Arn
       ResourcesVpcConfig:
         SubnetIds:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
+          - !Ref PrivateSubnet3
         EndpointPrivateAccess: false
         EndpointPublicAccess: true
 
   CoreDNSAddon:
     Type: AWS::EKS::Addon
     Properties:
-      ClusterName: !Ref ClusterName
       AddonName: coredns
-      AddonVersion: v1.10.1-eksbuild.1
+      ClusterName: !Ref EKSCluster
+      AddonVersion: "v1.10.1-eksbuild.4"
+      ResolveConflicts: OVERWRITE
+
+  VpcCniAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      AddonName: vpc-cni
+      ClusterName: !Ref EKSCluster
+      AddonVersion: "v1.16.2-eksbuild.1"
       ResolveConflicts: OVERWRITE
 
   KubeProxyAddon:
     Type: AWS::EKS::Addon
     Properties:
-      ClusterName: !Ref ClusterName
       AddonName: kube-proxy
-      AddonVersion: v1.29.0-eksbuild.1
+      ClusterName: !Ref EKSCluster
+      AddonVersion: "v1.29.0-eksbuild.1"
       ResolveConflicts: OVERWRITE
-
-  VPCContainerNetworkInterfaceAddon:
-    Type: AWS::EKS::Addon
+  EKSNodeGroupRole:
+    Type: AWS::IAM::Role
     Properties:
-      ClusterName: !Ref ClusterName
-      AddonName: vpc-cni
-      AddonVersion: v1.15.1-eksbuild.1
-      ResolveConflicts: OVERWRITE
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      RoleName: EKSNodeGroupRole
 
+  ### Managed Node Group ###
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      NodegroupName: ThreeTierNodeGroup
+      ClusterName: !Ref EKSCluster
+      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      Subnets:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      ScalingConfig:
+        MinSize: 1
+        DesiredSize: 2
+        MaxSize: 3
+      InstanceTypes:
+        - t3.medium
+      AmiType: AL2_x86_64
 Outputs:
   VPCId:
     Value: !Ref VPC
   EKSClusterName:
     Value: !Ref EKSCluster
   PublicSubnets:
-    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
   PrivateSubnets:
-    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
