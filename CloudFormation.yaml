@@ -1,42 +1,33 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Three Tier Architecture with VPC, Subnets, NAT, IGW, Route Tables, Security Groups, IAM, and EKS Cluster
+Description: EKS Cluster with VPC (3 Public, 3 Private Subnets) and Managed Node Group
 
 Parameters:
-  VpcCIDR:
+  ClusterName:
     Type: String
-    Default: 10.0.0.0/16
-  PublicSubnet1CIDR:
+    Default: my-eks-cluster
+  NodeInstanceType:
     Type: String
-    Default: 10.0.1.0/24
-  PublicSubnet2CIDR:
-    Type: String
-    Default: 10.0.2.0/24
-  PublicSubnet3CIDR:
-    Type: String
-    Default: 10.0.3.0/24
-  PrivateSubnet1CIDR:
-    Type: String
-    Default: 10.0.4.0/24
-  PrivateSubnet2CIDR:
-    Type: String
-    Default: 10.0.5.0/24
-  PrivateSubnet3CIDR:
-    Type: String
-    Default: 10.0.6.0/24
+    Default: t3.medium
 
 Resources:
+
+  # VPC
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: !Ref VpcCIDR
+      CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: ThreeTierVPC
+          Value: !Sub "${ClusterName}-vpc"
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-igw"
 
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -44,82 +35,39 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
+  # Public Subnets
   PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: !Ref PublicSubnet1CIDR
       AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: PublicSubnet1
+          Value: Public-Subnet-1
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: !Ref PublicSubnet2CIDR
       AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.2.0/24
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: PublicSubnet2
+          Value: Public-Subnet-2
 
   PublicSubnet3:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: !Ref PublicSubnet3CIDR
       AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: 10.0.3.0/24
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: PublicSubnet3
-
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet1CIDR
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: PrivateSubnet1
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet2CIDR
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: PrivateSubnet2
-
-  PrivateSubnet3:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !Ref PrivateSubnet3CIDR
-      AvailabilityZone: !Select [2, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: PrivateSubnet3
-
-  NatEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-
-  NATGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: NATGateway
+          Value: Public-Subnet-3
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -134,23 +82,68 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  PublicSubnet1RouteTableAssoc:
+  PublicSubnetRouteTableAssoc1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable
 
-  PublicSubnet2RouteTableAssoc:
+  PublicSubnetRouteTableAssoc2:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
-  PublicSubnet3RouteTableAssoc:
+  PublicSubnetRouteTableAssoc3:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet3
       RouteTableId: !Ref PublicRouteTable
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.101.0/24
+      Tags:
+        - Key: Name
+          Value: Private-Subnet-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.102.0/24
+      Tags:
+        - Key: Name
+          Value: Private-Subnet-2
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: 10.0.103.0/24
+      Tags:
+        - Key: Name
+          Value: Private-Subnet-3
+
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: NatGateway
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
@@ -162,116 +155,103 @@ Resources:
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NATGateway
+      NatGatewayId: !Ref NatGateway
 
-  PrivateSubnet1RouteTableAssoc:
+  PrivateSubnetRouteTableAssoc1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnet1
       RouteTableId: !Ref PrivateRouteTable
 
-  PrivateSubnet2RouteTableAssoc:
+  PrivateSubnetRouteTableAssoc2:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
-  PrivateSubnet3RouteTableAssoc:
+  PrivateSubnetRouteTableAssoc3:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnet3
       RouteTableId: !Ref PrivateRouteTable
 
+  # EKS Cluster Role
   EKSClusterRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: eks.amazonaws.com
-            Action: sts:AssumeRole
+              Service:
+                - eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
-      RoleName: EKS-Cluster-Role
 
+  # EKS Cluster
   EKSCluster:
     Type: AWS::EKS::Cluster
     Properties:
-      Name: ThreeTierEKSCluster
+      Name: !Ref ClusterName
       RoleArn: !GetAtt EKSClusterRole.Arn
       ResourcesVpcConfig:
         SubnetIds:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
           - !Ref PrivateSubnet3
-        EndpointPrivateAccess: false
         EndpointPublicAccess: true
+        EndpointPrivateAccess: false
 
-  ### EKS VPC CNI Addon ###
-  VpcCniAddon:
-    Type: AWS::EKS::Addon
-    Properties:
-      ClusterName: !Ref EKSCluster
-      AddonName: vpc-cni
-      ResolveConflicts: OVERWRITE
-
-  ### EKS CoreDNS Addon ###
-  CoreDNSAddon:
-    Type: AWS::EKS::Addon
-    Properties:
-      ClusterName: !Ref EKSCluster
-      AddonName: coredns
-      ResolveConflicts: OVERWRITE
-
-  ### EKS kube-proxy Addon ###
-  KubeProxyAddon:
-    Type: AWS::EKS::Addon
-    Properties:
-      ClusterName: !Ref EKSCluster
-      AddonName: kube-proxy
-      ResolveConflicts: OVERWRITE
-  EKSNodeGroupRole:
+  # NodeGroup Role
+  NodeInstanceRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
         - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
         - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
-      RoleName: EKSNodeGroupRole
 
-  ### Managed Node Group ###
+  # EKS Node Group
   EKSNodeGroup:
     Type: AWS::EKS::Nodegroup
+    DependsOn: EKSCluster
     Properties:
-      NodegroupName: ThreeTierNodeGroup
-      ClusterName: !Ref EKSCluster
-      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      ClusterName: !Ref ClusterName
+      NodegroupName: !Sub "${ClusterName}-nodegroup"
+      ScalingConfig:
+        MinSize: 1
+        MaxSize: 3
+        DesiredSize: 2
+      DiskSize: 20
+      InstanceTypes:
+        - !Ref NodeInstanceType
       Subnets:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
         - !Ref PrivateSubnet3
-      ScalingConfig:
-        MinSize: 1
-        DesiredSize: 2
-        MaxSize: 3
-      InstanceTypes:
-        - t3.medium
-      AmiType: AL2_x86_64
+      NodeRole: !GetAtt NodeInstanceRole.Arn
+
 Outputs:
-  VPCId:
-    Value: !Ref VPC
-  EKSClusterName:
-    Value: !Ref EKSCluster
-  PublicSubnets:
-    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
-  PrivateSubnets:
-    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+  ClusterName:
+    Description: EKS Cluster Name
+    Value: !Ref ClusterName
+
+  ClusterEndpoint:
+    Description: API Server Endpoint
+    Value: !GetAtt EKSCluster.Endpoint
+
+  ClusterRoleArn:
+    Description: IAM Role ARN for EKS Cluster
+    Value: !GetAtt EKSClusterRole.Arn
