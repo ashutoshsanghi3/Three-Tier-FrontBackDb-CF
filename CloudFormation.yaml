@@ -209,28 +209,28 @@ Resources:
         EndpointPrivateAccess: false
         EndpointPublicAccess: true
 
-  CoreDNSAddon:
-    Type: AWS::EKS::Addon
-    Properties:
-      AddonName: coredns
-      ClusterName: !Ref EKSCluster
-      AddonVersion: "v1.10.1-eksbuild.4"
-      ResolveConflicts: OVERWRITE
-
+  ### EKS VPC CNI Addon ###
   VpcCniAddon:
     Type: AWS::EKS::Addon
     Properties:
-      AddonName: vpc-cni
       ClusterName: !Ref EKSCluster
-      AddonVersion: "v1.16.2-eksbuild.1"
+      AddonName: vpc-cni
       ResolveConflicts: OVERWRITE
 
+  ### EKS CoreDNS Addon ###
+  CoreDNSAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName: !Ref EKSCluster
+      AddonName: coredns
+      ResolveConflicts: OVERWRITE
+
+  ### EKS kube-proxy Addon ###
   KubeProxyAddon:
     Type: AWS::EKS::Addon
     Properties:
-      AddonName: kube-proxy
       ClusterName: !Ref EKSCluster
-      AddonVersion: "v1.29.0-eksbuild.1"
+      AddonName: kube-proxy
       ResolveConflicts: OVERWRITE
   EKSNodeGroupRole:
     Type: AWS::IAM::Role
