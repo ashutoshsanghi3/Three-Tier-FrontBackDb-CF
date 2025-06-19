@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >
+Description: |
   CloudFormation template to deploy a complete AWS EKS cluster with custom VPC,
   public/private subnets, Internet Gateway, NAT Gateway, route tables,
   security groups, and a managed node group for a three-tier application.
@@ -60,7 +60,7 @@ Parameters:
   KeyPairName:
     Type: String
     Default: "ashutosh" # Leave empty if you don't need SSH access to worker nodes
-    Description: >
+    Description: |
       (Optional) The name of an existing EC2 KeyPair to enable SSH access to the worker nodes.
       Leave empty if no SSH access is desired.
 
@@ -291,21 +291,24 @@ Resources:
       GroupDescription: Security group for EKS worker nodes.
       VpcId: !Ref VPC
       SecurityGroupIngress:
+        # Allow EKS control plane to communicate with worker nodes
         - IpProtocol: -1
           FromPort: -1
           ToPort: -1
           SourceSecurityGroupId: !GetAtt EKSClusterSecurityGroup.GroupId
+        # Allow worker nodes to communicate with each other
         - IpProtocol: -1
           FromPort: -1
           ToPort: -1
           SourceSecurityGroupId: !GetAtt EKSNodeSecurityGroup.GroupId
+        # Optional: Allow SSH access if KeyPairName is provided
         - !If
           - HasKeyPair
           - IpProtocol: tcp
             FromPort: 22
             ToPort: 22
-            CidrIp: 0.0.0.0/0 # Restrict this in production
-          - !Ref "AWS::NoValue"
+            CidrIp: 0.0.0.0/0 # WARN: Restrict this CIDR in production for security
+          - !Ref "AWS::NoValue" # Omit this ingress rule if no KeyPairName
       Tags:
         - Key: Name
           Value: !Sub "${ClusterName}-node-sg"
@@ -357,7 +360,7 @@ Resources:
     Type: AWS::EKS::Cluster
     Properties:
       Name: !Ref ClusterName
-      Version: '1.27'
+      Version: '1.27' # Consider updating to a newer version like 1.28 or 1.29 if supported by EKS
       RoleArn: !GetAtt EKSClusterRole.Arn
       ResourcesVpcConfig:
         SubnetIds:
@@ -369,6 +372,7 @@ Resources:
           - !Ref PrivateSubnet3
         SecurityGroupIds:
           - !Ref EKSClusterSecurityGroup
+      # Optional: Add EndpointPublicAccess/EndpointPrivateAccess based on your security needs
 
   # --- EKS Managed Node Group ---
 
@@ -388,11 +392,17 @@ Resources:
         MaxSize: !Ref NodeMaxSize
       InstanceTypes:
         - !Ref NodeInstanceType
-      AmiType: AL2_x86_64
-      RemoteAccess:
-        Ec2SshKey: !If [HasKeyPair, !Ref KeyPairName, !Ref "AWS::NoValue"]
-        SourceSecurityGroups:
-          - !Ref EKSNodeSecurityGroup
+      AmiType: AL2_x86_64 # Use AL2_x86_64_GPU for GPU instances, AL2_ARM_64 for Graviton
+      # Only include RemoteAccess if KeyPairName is provided
+      RemoteAccess: !If
+        - HasKeyPair
+        - Ec2SshKey: !Ref KeyPairName
+          # SourceSecurityGroups is a list of security group IDs that are allowed to SSH into the nodes.
+          # This should ideally be a SG from a bastion host or a trusted IP range, NOT the node group's own SG.
+          # For demonstration, allowing from the node group's SG, but restrict in production.
+          SourceSecurityGroups:
+            - !Ref EKSNodeSecurityGroup
+        - !Ref "AWS::NoValue" # Omit RemoteAccess block if no KeyPairName
       Tags:
         - Key: Name
           Value: !Sub "${ClusterName}-nodegroup"
@@ -421,3 +431,4 @@ Outputs:
   PrivateSubnetIds:
     Description: List of Private Subnet IDs.
     Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+
