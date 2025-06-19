@@ -60,9 +60,6 @@ Parameters:
   KeyPairName:
     Type: String
     Default: "ashutosh" # Leave empty if you don't need SSH access to worker nodes
-    Description: |
-      (Optional) The name of an existing EC2 KeyPair to enable SSH access to the worker nodes.
-      Leave empty if no SSH access is desired.
 
 Conditions:
   HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
@@ -106,7 +103,7 @@ Resources:
         - Key: Name
           Value: !Sub "${ClusterName}-public-subnet-1"
         - Key: "kubernetes.io/role/elb"
-          Value: "1" # Required tag for EKS to auto-discover ELB subnets
+          Value: "1"
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -146,9 +143,9 @@ Resources:
         - Key: Name
           Value: !Sub "${ClusterName}-private-subnet-1"
         - Key: "kubernetes.io/role/internal-elb"
-          Value: "1" # Required tag for EKS to auto-discover internal ELB subnets
+          Value: "1"
         - Key: !Sub "kubernetes.io/cluster/${ClusterName}"
-          Value: "owned" # Required tag for EKS
+          Value: "owned"
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
@@ -266,14 +263,12 @@ Resources:
 
   # --- Security Groups ---
 
-  # Security Group for the EKS control plane (allows communication with worker nodes)
   EKSClusterSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Security group for EKS cluster control plane communication.
       VpcId: !Ref VPC
       SecurityGroupIngress:
-        # Allow worker nodes to communicate with the EKS API server
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
@@ -284,38 +279,34 @@ Resources:
         - Key: !Sub "kubernetes.io/cluster/${ClusterName}"
           Value: "owned"
 
-  # Security Group for EKS Worker Nodes
   EKSNodeSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Security group for EKS worker nodes.
       VpcId: !Ref VPC
       SecurityGroupIngress:
-        # Allow EKS control plane to communicate with worker nodes
         - IpProtocol: -1
           FromPort: -1
           ToPort: -1
           SourceSecurityGroupId: !GetAtt EKSClusterSecurityGroup.GroupId
-        # Allow worker nodes to communicate with each other
         - IpProtocol: -1
           FromPort: -1
           ToPort: -1
           SourceSecurityGroupId: !GetAtt EKSNodeSecurityGroup.GroupId
-        # Optional: Allow SSH access if KeyPairName is provided
         - !If
           - HasKeyPair
           - IpProtocol: tcp
             FromPort: 22
             ToPort: 22
-            CidrIp: 0.0.0.0/0 # WARN: Restrict this CIDR in production for security
-          - !Ref "AWS::NoValue" # Omit this ingress rule if no KeyPairName
+            CidrIp: 0.0.0.0/0
+          - !Ref "AWS::NoValue"
       Tags:
         - Key: Name
           Value: !Sub "${ClusterName}-node-sg"
         - Key: !Sub "kubernetes.io/cluster/${ClusterName}"
           Value: "owned"
 
-  # --- IAM Roles ---
+  # --- EKS Cluster and Node Group ---
 
   EKSClusterRole:
     Type: AWS::IAM::Role
@@ -327,15 +318,16 @@ Resources:
             Principal:
               Service:
                 - eks.amazonaws.com
-            Action: sts:AssumeRole
+            Action:
+              - sts:AssumeRole
+      Path: "/"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
-        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
       Tags:
         - Key: Name
-          Value: !Sub "${ClusterName}-EKSClusterRole"
+          Value: !Sub "${ClusterName}-eks-cluster-role"
 
-  EKSNodeGroupRole:
+  EKSNodeRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -345,24 +337,25 @@ Resources:
             Principal:
               Service:
                 - ec2.amazonaws.com
-            Action: sts:AssumeRole
+            Action:
+              - sts:AssumeRole
+      Path: "/"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
         - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
         - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
       Tags:
         - Key: Name
-          Value: !Sub "${ClusterName}-NodeGroupRole"
-
-  # --- EKS Cluster ---
+          Value: !Sub "${ClusterName}-eks-node-role"
 
   EKSCluster:
     Type: AWS::EKS::Cluster
     Properties:
       Name: !Ref ClusterName
-      Version: '1.27' # Consider updating to a newer version like 1.28 or 1.29 if supported by EKS
       RoleArn: !GetAtt EKSClusterRole.Arn
       ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref EKSClusterSecurityGroup
         SubnetIds:
           - !Ref PublicSubnet1
           - !Ref PublicSubnet2
@@ -370,65 +363,69 @@ Resources:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
           - !Ref PrivateSubnet3
-        SecurityGroupIds:
-          - !Ref EKSClusterSecurityGroup
-      # Optional: Add EndpointPublicAccess/EndpointPrivateAccess based on your security needs
+      Tags:
+        - Key: Name
+          Value: !Ref ClusterName
 
-  # --- EKS Managed Node Group ---
+  NodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ClusterName}-launch-template"
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Name: !Ref EKSNodeInstanceProfile
+        SecurityGroupIds:
+          - !Ref EKSNodeSecurityGroup
+        InstanceType: !Ref NodeInstanceType
+        KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref "AWS::NoValue"]
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -o xtrace
+            /etc/eks/bootstrap.sh ${ClusterName}
+
+  EKSNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref EKSNodeRole
 
   EKSNodeGroup:
     Type: AWS::EKS::Nodegroup
     Properties:
-      ClusterName: !Ref ClusterName
-      NodegroupName: !Ref NodeGroupName
-      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      ClusterName: !Ref EKSCluster
+      NodeRole: !GetAtt EKSNodeRole.Arn
       Subnets:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
         - !Ref PrivateSubnet3
+      NodegroupName: !Ref NodeGroupName
       ScalingConfig:
         DesiredSize: !Ref NodeDesiredCapacity
         MinSize: !Ref NodeMinSize
         MaxSize: !Ref NodeMaxSize
       InstanceTypes:
         - !Ref NodeInstanceType
-      AmiType: AL2_x86_64 # Use AL2_x86_64_GPU for GPU instances, AL2_ARM_64 for Graviton
-      # Only include RemoteAccess if KeyPairName is provided
-      RemoteAccess: !If
-        - HasKeyPair
-        - Ec2SshKey: !Ref KeyPairName
-          # SourceSecurityGroups is a list of security group IDs that are allowed to SSH into the nodes.
-          # This should ideally be a SG from a bastion host or a trusted IP range, NOT the node group's own SG.
-          # For demonstration, allowing from the node group's SG, but restrict in production.
-          SourceSecurityGroups:
-            - !Ref EKSNodeSecurityGroup
-        - !Ref "AWS::NoValue" # Omit RemoteAccess block if no KeyPairName
+      AmiType: AL2_x86_64
+      RemoteAccess:
+        Ec2SshKey: !If [HasKeyPair, !Ref KeyPairName, !Ref "AWS::NoValue"]
+        SourceSecurityGroups:
+          - !Ref EKSNodeSecurityGroup
       Tags:
         - Key: Name
           Value: !Sub "${ClusterName}-nodegroup"
-        - Key: !Sub "kubernetes.io/cluster/${ClusterName}"
-          Value: "owned"
 
 Outputs:
   ClusterName:
-    Description: The name of the EKS cluster.
+    Description: EKS Cluster Name
     Value: !Ref ClusterName
   ClusterEndpoint:
-    Description: API Server endpoint URL for the EKS cluster.
+    Description: API Server endpoint URL
     Value: !GetAtt EKSCluster.Endpoint
   ClusterSecurityGroupId:
-    Description: Security Group ID for EKS Cluster.
+    Description: EKS Cluster Security Group Id
     Value: !Ref EKSClusterSecurityGroup
-  NodeGroupRoleArn:
-    Description: ARN of the EKS Node Group IAM Role.
-    Value: !GetAtt EKSNodeGroupRole.Arn
-  VPCId:
-    Description: VPC ID where the cluster is deployed.
-    Value: !Ref VPC
-  PublicSubnetIds:
-    Description: List of Public Subnet IDs.
-    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
-  PrivateSubnetIds:
-    Description: List of Private Subnet IDs.
-    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
-
+  NodeInstanceRole:
+    Description: IAM role associated with worker nodes
+    Value: !Ref EKSNodeRole
