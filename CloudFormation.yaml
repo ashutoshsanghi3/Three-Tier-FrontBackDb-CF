@@ -59,7 +59,7 @@ Parameters:
     Description: CIDR block for Private Subnet 3.
   KeyPairName:
     Type: String
-    Default: "ustweb" # Leave empty if you don't need SSH access to worker nodes
+    Default: "ashutosh" # Leave empty if you don't need SSH access to worker nodes
     Description: >
       (Optional) The name of an existing EC2 KeyPair to enable SSH access to the worker nodes.
       Leave empty if no SSH access is desired.
