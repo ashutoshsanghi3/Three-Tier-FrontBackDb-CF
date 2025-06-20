@@ -31,6 +31,14 @@ phases:
       - echo Installing frontend and backend dependencies...
       - cd $FRONTEND_DIR && npm install && cd -
       - cd $BACKEND_DIR && npm install && cd -
+      - echo Sonar Qube
+      - |
+        sonar-scanner \
+          -Dsonar.projectKey=sonarproj \
+          -Dsonar.sources=. \
+          -Dsonar.host.url=http://18.226.98.166 \
+          -Dsonar.login=sqp_747ef5b1e452d3fbcfa43df8fb37d1e3a8f8ebda
+
 
   build:
     commands:
